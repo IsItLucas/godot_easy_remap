@@ -1,149 +1,150 @@
 extends Node
 
 
-## Emitted when [param action]'s [param old_event] is remapped successfully to the given [param new_event].
+## Emitted when [param action]'s [param input] event is successfully remapped to a [param new_event].
 signal remap_success(action: String, old_event: InputEvent, new_event: InputEvent)
 
-## Emitted when [param action] couldn't be remapped because of [method listen_stop].
+## Emitted when the remapping of [param action] fails due to [method listen_stop] being called.
 signal remap_fail(action: String)
 
 
-## A list with all possible modifiers for inputs.
+## A list of all supported modifier keys (e.g., Alt, Shift, Ctrl).
 const MODIFIERS: Array = [
+	## LEFT ALT or RIGHT ALT key.
 	KEY_ALT,
+	
+	## LEFT SHIFT or RIGHT SHIFT key.
 	KEY_SHIFT,
+	
+	## LEFT CTRL or RIGHT CTRL key
 	KEY_CTRL,
 ]
 
 
-## Determines if modifiers for inputs are allowed or not.
+## Determines if modifier keys are allowed during input remapping.
 var listen_modifiers := false
 
-## The action that is about to be remapped.
+## The name of the action currently being remapped.
 var listen_action := ""
 
-## The input event that is about to be remapped.
+## The input event associated with the action being remapped.
 var listen_event: InputEvent
 
-## The modifiers currently active.
+## A list of currently active modifier keys.
 var active_modifiers: Array[Key] = []
 
 
 func _ready() -> void:
-	# Make sure this autoload runs even when the game is paused.
+	# Ensure this autoload processes input even when the game is paused.
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	
-	# Disable input function by default.
+	# Disable input processing by default.
 	set_process_input(false)
 
 
 func _input(event: InputEvent) -> void:
-	# Get variables.
+	# Debug log configuration.
 	var debug_log: bool = RemapHelper.get_setting("debug_log", true)
 	
-	# Ignore mouse motion.
+	# Ignore mouse motion events.
 	if event is InputEventMouseMotion:
 		return
 	
-	# Check if an action is ready to be remapped.
+	# Ensure the action exists in the InputMap before proceeding.
 	if not InputMap.has_action(listen_action):
 		return
 	
-	# Check for modifiers.
+	# Handle modifier keys.
 	var mod_callable := func update_modifiers(event: InputEvent) -> bool:
-		# Check if the event is a key press - modifiers can only be key presses.
+		# Only handle key press events for modifiers.
 		if not event is InputEventKey:
 			return false
 		
-		# Check if the key pressed is one of the supported event keys.
+		# Check if the pressed key is a valid modifier.
 		if not event.keycode in MODIFIERS:
 			return false
 		
-		# Key pressed - add modifier if it doesn't exists.
+		# Add or remove modifiers based on key press/release state.
 		if event.pressed:
 			if not event.keycode in active_modifiers:
 				active_modifiers.push_back(event.keycode)
-			else:
-				return true # Return true here because it is a valid modifier but we don't want to spam the log.
-		
-		# Key released - remove modifier if it exists.
 		else:
-			if event.keycode in active_modifiers:
-				active_modifiers.erase(event.keycode)
-			else:
-				return true  # Return true here because it is a valid modifier but we don't want to spam the log.
+			active_modifiers.erase(event.keycode)
 		
-		# Debug log.
+		# Debug log active modifiers.
 		if debug_log:
 			var str_modifiers: PackedStringArray = []
-			for key: Key in active_modifiers: 
+			for key: Key in active_modifiers:
 				str_modifiers.push_back(OS.get_keycode_string(key))
 			
-			print("Active modifiers: " + str(str_modifiers))
+			print("Modifiers currently active: %s." % str_modifiers)
 		
-		# Returning true because a valid modifier was found
 		return true
 	
+	# Process modifiers if enabled.
 	if listen_modifiers:
 		if mod_callable.call(event):
 			return
 	
-	# Create new event.
+	# Duplicate the event and apply active modifiers if necessary.
 	var new_event: InputEvent = event.duplicate()
-	
 	if listen_modifiers:
-		# Add modifiers.
 		for key: Key in active_modifiers:
 			match key:
 				KEY_ALT: new_event.alt_pressed = true
 				KEY_SHIFT: new_event.shift_pressed = true
 				KEY_CTRL: new_event.ctrl_pressed = true
 	
-	# Remap.
+	# Remap the action's input event.
 	InputMap.action_erase_event(listen_action, listen_event)
 	InputMap.action_add_event(listen_action, new_event)
 	
-	# Emit signal.
+	# Emit the success signal and log the remapping.
 	remap_success.emit(listen_action, listen_event, new_event)
-	
-	# Debug log.
 	if debug_log:
-		print("Event \"%s\" from \"%s\" was replaced by \"%s\"." % [listen_event.as_text(), listen_action, new_event.as_text()])
+		print("Successfully remapped action '%s': '%s' replaced with '%s'." % [listen_action, listen_event.as_text(), new_event.as_text()])
 	
-	# Invalidate action.
+	# Reset remapping variables.
 	listen_action = ""
 	listen_event = null
 
 
-## Starts listening to inputs to remap [param action].
+## Starts listening for input to remap the specified action.
+## - [param action]: The name of the action to be remapped.
+## - [param event]: The current input event assigned to the action.
+## - [param allow_modifiers]: Whether modifiers (Alt, Shift, Ctrl) are allowed.
 func listen_start(action: String, event: InputEvent, allow_modifiers: bool) -> void:
-	# Check if action exists.
+	# Ensure the action exists in the InputMap.
 	if not InputMap.has_action(action):
-		push_warning("Action \"%s\" doesn't exists." % action)
+		push_warning("Cannot remap action '%s': it does not exist in the InputMap." % action)
 		return
 	
-	# Check if event exists.
+	# Ensure the event exists for the action.
 	if not InputMap.action_has_event(action, event):
-		push_warning("Action \"%s\" doesn't have event \"%s\"." % [action, event])
+		push_warning("Cannot remap action '%s': the event '%s' is not assigned to this action." % [action, event.as_text()])
 		return
 	
-	# Update listening action.
+	# Set remapping variables.
 	listen_action = action
 	listen_event = event
 	listen_modifiers = allow_modifiers
 	
-	# Enable input function.
+	# Enable input processing to listen for the next input.
 	set_process_input(true)
 
 
-## Cancels the action remap.
+## Stops listening for input and cancels the remapping process.
 func listen_stop() -> void:
-	# Emit a signal.
-	remap_fail.emit(listen_action)
+	# Emit the failure signal if a remap was in progress.
+	if listen_action != "":
+		remap_fail.emit(listen_action)
+	else:
+		push_warning("listen_stop() was called, but no remapping was in progress.")
+		return
 	
-	# Invalidate action.
+	# Reset remapping variables.
 	listen_action = ""
 	listen_event = null
 	
-	# Disable input function.
+	# Disable input processing.
 	set_process_input(false)
